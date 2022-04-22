@@ -1,0 +1,215 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+
+import { SafeTransferLib } from "solmate/utils/SafeTransferLib.sol";
+import { ERC20 } from "solmate/tokens/ERC20.sol";
+import { ERC4626 } from "solmate/tokens/ERC4626.sol";
+
+
+contract Streamer {
+    using SafeTransferLib for ERC20;
+
+    // user account
+    struct Account {
+        // balances of deposits per token - for handling multiple erc20s
+        mapping(address => uint256) balances;
+
+        // balance of base token
+        uint256 balance;
+
+        // whitelisted addresses for an account (bool for active)
+        // could create whitelist struct (allowance, num withdraws, etc)
+        mapping(address => bool) whitelist;
+    }
+
+    // events
+
+    event Deposit(address indexed sender, address token, uint amount, uint balance);
+    event DepositBase(address indexed sender, uint amount, uint balance);
+
+    event Withdrawal(address indexed accountOwner, address token, uint amount, uint balance, address recipient);
+    event WithdrawalBase(address indexed accountOwner, uint amount, uint balance, address recipient);
+
+    event AuthorizedAddress(address indexed accountOwner, address indexed newAddress, bool active);
+
+    // custom errors
+
+    error Unauthorized(address caller);
+    error InsufficientBalance();
+    error InvalidAccount();
+    error ERC20CallFailed(address target, bool success, bytes data);
+
+
+    // private storage
+
+    // map of addresses and balances
+    mapping(address => Account) private _accountOwners;
+
+    constructor() {}
+
+    // external functions
+
+    function authorizeAddress(address newAddress) external returns (address) {
+        Account storage account = _accountOwners[msg.sender];
+
+        // activate address 
+        account.whitelist[newAddress] = true;
+
+        emit AuthorizedAddress(msg.sender, newAddress, true);
+
+        return newAddress;
+    }
+
+    function unauthorizeAddress(address newAddress) external returns (address) {
+        Account storage account = _accountOwners[msg.sender];
+
+        // deactivate address 
+        account.whitelist[newAddress] = false;
+
+        emit AuthorizedAddress(msg.sender, newAddress, false);
+
+        return newAddress;
+    }
+
+    // base token functions 
+
+    receive() external payable {
+        // get or create account
+        Account storage account = _accountOwners[msg.sender];
+
+        // calculate new balance
+        uint256 _balance = account.balance + msg.value;
+
+        // set balance
+        account.balance = _balance;        
+
+        emit DepositBase(msg.sender, msg.value, _balance);
+    }
+
+    function withdrawBase(uint256 amount) external payable returns (uint256) {
+        _validBaseWithdrawal(amount, msg.sender);
+
+        // get or create account
+        Account storage account = _accountOwners[msg.sender];
+
+        uint256 _balance = account.balance - msg.value;
+
+        // set balance
+        account.balance = _balance; 
+
+        payable(msg.sender).transfer(amount);
+
+        emit WithdrawalBase(msg.sender, amount, _balance, msg.sender);
+
+        return _balance;
+    }
+
+    function withdrawBaseFrom(uint256 amount, address accountOwner) external payable returns (uint256) {
+        _authorizedAccount(accountOwner);
+        _validBaseWithdrawal(amount, accountOwner);
+
+        // get or create account
+        Account storage account = _accountOwners[accountOwner];
+
+        uint256 _balance = account.balance - msg.value;
+
+        // set balance
+        account.balance = _balance; 
+
+        payable(msg.sender).transfer(amount);
+
+        emit WithdrawalBase(accountOwner, amount, _balance, msg.sender);
+
+        return _balance;
+    }
+
+    // ERC20 token functions
+
+    function deposit(address token, uint256 amount) external returns (uint256) {
+        // get or create account
+        Account storage account = _accountOwners[msg.sender];
+
+        // update new balance 
+        uint256 balance = account.balances[token] + amount;
+
+        // set balance of token 
+        account.balances[token] = balance;
+
+        // transfer token
+        transferFrom(msg.sender, address(this), amount);
+        
+        emit Deposit(msg.sender, token, amount, balance);
+
+        return balance;
+    }
+
+    function withdraw(address token, uint256 amount) external returns (uint256) {
+        _validWithdrawal(amount, msg.sender, token);
+
+        // get or create account
+        Account storage account = _accountOwners[msg.sender];
+
+        // update new balance 
+        uint256 balance = account.balances[token] - amount;
+
+        // set balance of token 
+        account.balances[token] = balance;
+
+        // transfer token
+        token.transferFrom(address(this), msg.sender, amount);
+        
+        emit Withdrawal(msg.sender, token, amount, balance, msg.sender);
+
+        return balance;
+    }
+
+    function withdrawFrom(address accountOwner, address token, uint256 amount) external returns (uint256) {
+        _authorizedAccount(accountOwner);
+        _validWithdrawal(amount, accountOwner, token);
+
+        // get or create account
+        Account storage account = _accountOwners[accountOwner];
+
+        // update new balance 
+        uint256 balance = account.balances[token] - amount;
+
+        // set balance of token 
+        account.balances[token] = balance;
+
+        // transfer token
+        token.transferFrom(address(this), msg.sender, amount);
+        
+        emit Withdrawal(accountOwner, token, amount, balance, msg.sender);
+
+        return balance;
+    }
+    
+    // validations
+
+    function _authorizedAccount(address accountOwner) internal view {
+        Account storage account = _accountOwners[accountOwner];
+
+        // check if account is authorized
+        if (account.whitelist[msg.sender] != true) {
+            revert Unauthorized(msg.sender);
+        }
+    }
+
+    function _validWithdrawal(uint256 amount, address account, address token) internal view {
+        Account storage _account = _accountOwners[account];
+
+        // check that the account has sufficient balance 
+        if (amount > _account.balances[token]) {
+            revert InsufficientBalance();
+        }
+    }
+
+    function _validBaseWithdrawal(uint256 amount, address account) internal view {
+        Account storage _account = _accountOwners[account];
+
+        // check that the account has sufficient base balance 
+        if (amount > _account.balance) {
+            revert InsufficientBalance();
+        }
+    }
+}
