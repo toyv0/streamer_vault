@@ -27,7 +27,7 @@ contract Streamer {
         // balance of base token
         uint256 balance;
 
-        // balance of strategy 
+        // balance of yeild strategy 
         uint256 strategyBalance;
 
         // whitelisted addresses for an account (bool for active)
@@ -52,7 +52,7 @@ contract Streamer {
 
     event AuthorizedAddress(address indexed accountOwner, address indexed newAddress, bool active);
 
-    event StrategyUpdated(address value);
+    event StrategyUpdated(address strategy, address underlying);
 
     /*//////////////////////////////////////////////////////////////
                                  Custom Errors
@@ -69,29 +69,27 @@ contract Streamer {
 
     // map of addresses and balances
     mapping(address => Account) private _accountOwners;
-    Addresses private _supportedStrategyTokens;
+    address underlyingStrategyToken;
 
-    constructor() {
-        strategy = 0x17b1A2E012cC4C31f83B90FF11d3942857664efc;
-        owner = msg.sender;
+    constructor(address _strategy, address _owner, address _underlying) {
+        strategy = _strategy; // deployed fei strategy 
+        owner = _owner;
+        underlyingStrategyToken = _underlying; 
     }
 
     /*//////////////////////////////////////////////////////////////
                                  External functions
     //////////////////////////////////////////////////////////////*/ 
 
-    function getSupportedStrategyTokens() external view returns (address[] memory) {
-        return _supportedStrategyTokens.tokens;
+    function getSupportedStrategyToken() external view returns (address) {
+        return underlyingStrategyToken;
     }
 
-    function isSupportedStrategyToken(address token) external view returns (bool) {
-        return _strategyContains(token);
-    }
-
-    function setStrategy(address value) external {
+    function setStrategy(address _strategy, address _underlying) external {
         _onlyOwner();
-        strategy = value;
-        emit StrategyUpdated(value);
+        strategy = _strategy;
+        underlyingStrategyToken = _underlying;
+        emit StrategyUpdated(_strategy, _underlying);
     } 
 
     function authorizeAddress(address newAddress) external returns (address) {
@@ -127,10 +125,20 @@ contract Streamer {
     }
 
     // get the balance of an account 
-    function getAccountBalance() external returns (uint256) {
-        Account storage account = _accountOwners[msg.sender];
+    function getAccountBalance(address account) external view returns (uint256) {
+        Account storage account = _accountOwners[account];
         
         return account.balance;
+    }
+
+    function getERC20Balance(address token, address account) external view returns (uint256) {
+        Account storage account = _accountOwners[account];
+        return account.balances[token];
+    }
+
+    function getYeildStrategyBalance(address token, address account) external view returns (uint256) {
+        Account storage account = _accountOwners[account];
+        return account.strategyBalance;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -191,41 +199,40 @@ contract Streamer {
                                  Yeild Strategy Functions
     //////////////////////////////////////////////////////////////*/
 
-    // how does the 4626 strategy know which token it is recieving and which token to return on withdraw
-
-    function depositToStrategy(address token, uint256 amount) external returns (uint256) {
+    function _depositToStrategy(uint256 amount) internal returns (uint256) {
         // get or create account
         Account storage account = _accountOwners[msg.sender];
+
         uint256 newStrategyBalance;
 
-        if (_strategyContains(token)) {
-            //token.approve(address(strategy), amount);
-            uint256 shares = ERC4626(token).deposit(amount, strategy); 
+        ERC20(underlyingStrategyToken).transferFrom(msg.sender, address(this), amount);
+        ERC20(underlyingStrategyToken).approve(address(strategy), amount);
+        uint256 shares = ERC4626(strategy).deposit(amount, address(this)); 
 
-            // update new balance 
-            newStrategyBalance = account.strategyBalance + shares;
+        // update new balance 
+        newStrategyBalance = account.strategyBalance + shares;
+ 
+        // set balance of strategy 
+        account.strategyBalance = newStrategyBalance;
 
-            // set balance of strategy 
-            account.strategyBalance = newStrategyBalance;
-        }
-
-        emit Deposit(msg.sender, token, amount, newStrategyBalance);
+        emit Deposit(msg.sender, underlyingStrategyToken, amount, newStrategyBalance);
 
         return newStrategyBalance;
     }
 
-    function withdrawFromStrategy(address token, uint256 amount) external returns (uint256) {
-        _validStrategyWithdrawal(amount, msg.sender);
-
+    function _withdrawFromStrategy(uint256 amount) internal returns (uint256) {
         Account storage account = _accountOwners[msg.sender];
 
-        uint256 newStrategyBalance = account.strategyBalance - amount;
+        uint256 newStrategyBalance;
+
+        uint256 shares = ERC4626(strategy).withdraw(amount, address(this), msg.sender);
+        ERC20(underlyingStrategyToken).transferFrom(address(this), msg.sender, amount);
+
+        newStrategyBalance = account.strategyBalance - shares;
 
         account.strategyBalance = newStrategyBalance;
 
-        ERC4626(token).withdraw(amount, msg.sender, strategy);
-
-        emit Withdraw(msg.sender, token, amount, newStrategyBalance, msg.sender);
+        emit Withdraw(msg.sender, underlyingStrategyToken, amount, newStrategyBalance, msg.sender);
 
         return newStrategyBalance;
     }
@@ -234,63 +241,79 @@ contract Streamer {
                                  ERC20 Token Functions
     //////////////////////////////////////////////////////////////*/
 
+    // add ReentrancyGuard from open zeppelin 
     function deposit(address token, uint256 amount) external returns (uint256) {
-        // get or create account
-        Account storage account = _accountOwners[msg.sender];
+        if (underlyingStrategyToken == token) {
+            _depositToStrategy(amount);
+        } else {
+            Account storage account = _accountOwners[msg.sender];
 
-        // update new balance 
-        uint256 balance = account.balances[token] + amount;
+            // move this to internal deposit function
+            // update new balance 
+            uint256 balance = account.balances[token] + amount;
 
-        // set balance of token 
-        account.balances[token] = balance;
+            // set balance of token 
+            account.balances[token] = balance;
 
-        // transfer token
-        ERC20(token).transferFrom(msg.sender, address(this), amount);
-        
-        emit Deposit(msg.sender, token, amount, balance);
+            // transfer token
+            ERC20(token).transferFrom(msg.sender, address(this), amount);
+            
+            emit Deposit(msg.sender, token, amount, balance);
 
-        return balance;
+            return balance;
+        }
     }
 
     function withdraw(address token, uint256 amount) external returns (uint256) {
-        _validWithdrawal(amount, msg.sender, token);
+        if (underlyingStrategyToken == token) {
+            _validStrategyWithdrawal(amount, msg.sender);
+            _withdrawFromStrategy(amount);
+        } else {
+            _validWithdrawal(amount, msg.sender, token);
+            
+            Account storage account = _accountOwners[msg.sender];
 
-        // get or create account
-        Account storage account = _accountOwners[msg.sender];
+            // update new balance 
+            uint256 balance = account.balances[token] - amount;
 
-        // update new balance 
-        uint256 balance = account.balances[token] - amount;
+            // set balance of token 
+            account.balances[token] = balance;
 
-        // set balance of token 
-        account.balances[token] = balance;
+            // transfer token
+            ERC20(token).transferFrom(address(this), msg.sender, amount);
+            
+            emit Withdraw(msg.sender, token, amount, balance, msg.sender);
 
-        // transfer token
-        ERC20(token).transferFrom(address(this), msg.sender, amount);
-        
-        emit Withdraw(msg.sender, token, amount, balance, msg.sender);
+            return balance;
+        }
 
-        return balance;
     }
 
     function withdrawFrom(address accountOwner, address token, uint256 amount) external returns (uint256) {
         _authorizedAccount(accountOwner);
-        _validWithdrawal(amount, accountOwner, token);
 
         // get or create account
         Account storage account = _accountOwners[accountOwner];
 
-        // update new balance 
-        uint256 balance = account.balances[token] - amount;
+        if (underlyingStrategyToken == token) {
+            _validStrategyWithdrawal(amount, accountOwner);
+            _withdrawFromStrategy(amount);
+        } else {
+            _validWithdrawal(amount, accountOwner, token);
 
-        // set balance of token 
-        account.balances[token] = balance;
+            // update new balance 
+            uint256 balance = account.balances[token] - amount;
 
-        // transfer token
-        ERC20(token).transferFrom(address(this), msg.sender, amount);
-        
-        emit Withdraw(accountOwner, token, amount, balance, msg.sender);
+            // set balance of token 
+            account.balances[token] = balance;
 
-        return balance;
+            // transfer token
+            ERC20(token).transfer(msg.sender, amount);
+            
+            emit Withdraw(accountOwner, token, amount, balance, msg.sender);
+
+            return balance;
+        }
     }
     
     /*//////////////////////////////////////////////////////////////
@@ -322,6 +345,15 @@ contract Streamer {
         }
     }
 
+    function _validStrategyWithdrawal(uint256 amount, address account) internal view {
+        Account storage _account = _accountOwners[account];
+
+        // check that the account has sufficient ERC20 balance 
+        if (amount > _account.strategyBalance) {
+            revert InsufficientBalance();
+        }
+    }
+
     function _validBaseWithdrawal(uint256 amount, address account) internal view {
         Account storage _account = _accountOwners[account];
 
@@ -329,31 +361,5 @@ contract Streamer {
         if (amount > _account.balance) {
             revert InsufficientBalance();
         }
-    }
-
-    function _validStrategyWithdrawal(uint256 amount, address account) internal view {
-        Account storage _account = _accountOwners[account];
-
-        if (amount > _account.strategyBalance) {
-            revert InsufficientBalance();
-        }
-    }
-
-    // check that token is supported by the current strategy 
-    function _strategyContains(address token) internal view returns (bool) {
-        return _supportedStrategyTokens.indexes[token] != 0;
-    }
-
-    // only a owner can add a token to the strategy 
-    function _addTokenToStrategy(address token) internal returns (bool) {
-        _onlyOwner();
-
-        if (_strategyContains(token)) {
-            return false;
-        }
-        
-        _supportedStrategyTokens.tokens.push(token);
-        _supportedStrategyTokens.indexes[token] = _supportedStrategyTokens.tokens.length;
-        return true;
     }
 }
