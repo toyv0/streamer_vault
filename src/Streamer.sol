@@ -3,9 +3,7 @@ pragma solidity 0.8.10;
 
 import { SafeTransferLib } from "solmate/utils/SafeTransferLib.sol";
 import { ERC20 } from "solmate/tokens/ERC20.sol";
-import { ERC4626 } from "solmate/tokens/ERC4626.sol";
-import {Addresses} from "./utils/Addresses.sol";
-
+import { ERC4626 } from "solmate/mixins/ERC4626.sol";
 
 contract Streamer {
     using SafeTransferLib for ERC20;
@@ -49,7 +47,7 @@ contract Streamer {
     event Deposit(address indexed sender, address token, uint amount, uint balance);
     event DepositBase(address indexed sender, uint amount, uint balance);
 
-    event Withdrawal(address indexed accountOwner, address token, uint amount, uint balance, address recipient);
+    event Withdraw(address indexed accountOwner, address token, uint amount, uint balance, address recipient);
     event WithdrawalBase(address indexed accountOwner, uint amount, uint balance, address recipient);
 
     event AuthorizedAddress(address indexed accountOwner, address indexed newAddress, bool active);
@@ -74,7 +72,7 @@ contract Streamer {
     Addresses private _supportedStrategyTokens;
 
     constructor() {
-        strategy = Addresses.FUSE_POOL_18_ADDRESS;
+        strategy = 0x17b1A2E012cC4C31f83B90FF11d3942857664efc;
         owner = msg.sender;
     }
 
@@ -90,7 +88,7 @@ contract Streamer {
         return _strategyContains(token);
     }
 
-    function setStrategy(address value) external view {
+    function setStrategy(address value) external {
         _onlyOwner();
         strategy = value;
         emit StrategyUpdated(value);
@@ -116,6 +114,23 @@ contract Streamer {
         emit AuthorizedAddress(msg.sender, newAddress, false);
 
         return newAddress;
+    }
+
+    // get the balance of a whitelisted user 
+    function getAuthorizedBalance(address accountOwner) external returns (uint256) {
+        Account storage account = _accountOwners[accountOwner];
+        if (account.whitelist[msg.sender] = true) {
+            return account.balance; 
+        } else {
+            return 0;
+        }
+    }
+
+    // get the balance of an account 
+    function getAccountBalance() external returns (uint256) {
+        Account storage account = _accountOwners[msg.sender];
+        
+        return account.balance;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -181,13 +196,14 @@ contract Streamer {
     function depositToStrategy(address token, uint256 amount) external returns (uint256) {
         // get or create account
         Account storage account = _accountOwners[msg.sender];
+        uint256 newStrategyBalance;
 
         if (_strategyContains(token)) {
-            token.approve(address(strategy), amount);
-            uint256 shares = ERC4626.deposit(amount, strategy); 
+            //token.approve(address(strategy), amount);
+            uint256 shares = ERC4626(token).deposit(amount, strategy); 
 
             // update new balance 
-            uint256 newStrategyBalance = account.strategyBalance + shares;
+            newStrategyBalance = account.strategyBalance + shares;
 
             // set balance of strategy 
             account.strategyBalance = newStrategyBalance;
@@ -207,9 +223,9 @@ contract Streamer {
 
         account.strategyBalance = newStrategyBalance;
 
-        ERC4626.withdraw(amount, msg.sender, strategy);
+        ERC4626(token).withdraw(amount, msg.sender, strategy);
 
-        emit Withdraw(msg.sender, token, amount, newStrategyBalance);
+        emit Withdraw(msg.sender, token, amount, newStrategyBalance, msg.sender);
 
         return newStrategyBalance;
     }
@@ -223,13 +239,13 @@ contract Streamer {
         Account storage account = _accountOwners[msg.sender];
 
         // update new balance 
-        uint256 balance = account.balances[token] + shares;
+        uint256 balance = account.balances[token] + amount;
 
         // set balance of token 
         account.balances[token] = balance;
 
         // transfer token
-        transferFrom(msg.sender, address(this), amount);
+        ERC20(token).transferFrom(msg.sender, address(this), amount);
         
         emit Deposit(msg.sender, token, amount, balance);
 
@@ -249,9 +265,9 @@ contract Streamer {
         account.balances[token] = balance;
 
         // transfer token
-        token.transferFrom(address(this), msg.sender, amount);
+        ERC20(token).transferFrom(address(this), msg.sender, amount);
         
-        emit Withdrawal(msg.sender, token, amount, balance, msg.sender);
+        emit Withdraw(msg.sender, token, amount, balance, msg.sender);
 
         return balance;
     }
@@ -270,9 +286,9 @@ contract Streamer {
         account.balances[token] = balance;
 
         // transfer token
-        token.transferFrom(address(this), msg.sender, amount);
+        ERC20(token).transferFrom(address(this), msg.sender, amount);
         
-        emit Withdrawal(accountOwner, token, amount, balance, msg.sender);
+        emit Withdraw(accountOwner, token, amount, balance, msg.sender);
 
         return balance;
     }
