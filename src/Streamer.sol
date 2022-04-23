@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 
-import { SafeTransferLib } from "solmate/utils/SafeTransferLib.sol";
-import { ERC20 } from "solmate/tokens/ERC20.sol";
-import { ERC4626 } from "solmate/mixins/ERC4626.sol";
+import { SafeTransferLib } from "@rari-capital/solmate/src/utils/SafeTransferLib.sol";
+import { ERC20 } from "@rari-capital/solmate/src/tokens/ERC20.sol";
+import { ERC4626 } from "@rari-capital/solmate/src/mixins/ERC4626.sol";
 
 contract Streamer {
     using SafeTransferLib for ERC20;
