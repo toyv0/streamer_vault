@@ -206,11 +206,12 @@ contract Streamer {
         uint256 newStrategyBalance;
 
         ERC20(underlyingStrategyToken).transferFrom(msg.sender, address(this), amount);
+        ERC20(underlyingStrategyToken).approve(address(strategy), amount);
         uint256 shares = ERC4626(strategy).deposit(amount, address(this)); 
 
         // update new balance 
         newStrategyBalance = account.strategyBalance + shares;
-
+ 
         // set balance of strategy 
         account.strategyBalance = newStrategyBalance;
 
