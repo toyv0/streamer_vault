@@ -27,7 +27,7 @@ contract Streamer {
         // balance of base token
         uint256 balance;
 
-        // balance of strategy 
+        // balance of yeild strategy 
         uint256 strategyBalance;
 
         // whitelisted addresses for an account (bool for active)
@@ -71,9 +71,9 @@ contract Streamer {
     mapping(address => Account) private _accountOwners;
     Addresses private _supportedStrategyTokens;
 
-    constructor() {
-        strategy = 0x17b1A2E012cC4C31f83B90FF11d3942857664efc;
-        owner = msg.sender;
+    constructor(address _strategy, address _owner) {
+        strategy = _strategy; // add Addresses.FUSE_POOL_18_ADDRESS
+        owner = _owner;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -127,10 +127,15 @@ contract Streamer {
     }
 
     // get the balance of an account 
-    function getAccountBalance() external returns (uint256) {
-        Account storage account = _accountOwners[msg.sender];
+    function getAccountBalance(address account) external view returns (uint256) {
+        Account storage account = _accountOwners[account];
         
         return account.balance;
+    }
+
+    function getERC20Balance(address token, address account) external view returns (uint256) {
+        Account storage account = _accountOwners[account];
+        return account.balances[token];
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -191,8 +196,8 @@ contract Streamer {
                                  Yeild Strategy Functions
     //////////////////////////////////////////////////////////////*/
 
-    // how does the 4626 strategy know which token it is recieving and which token to return on withdraw
-
+    // add ReentrancyGuard from open zeppelin 
+    // could make this internal and call within greater deposit function 
     function depositToStrategy(address token, uint256 amount) external returns (uint256) {
         // get or create account
         Account storage account = _accountOwners[msg.sender];
@@ -200,7 +205,7 @@ contract Streamer {
 
         if (_strategyContains(token)) {
             //token.approve(address(strategy), amount);
-            uint256 shares = ERC4626(token).deposit(amount, strategy); 
+            uint256 shares = ERC4626(strategy).deposit(amount, address(this)); 
 
             // update new balance 
             newStrategyBalance = account.strategyBalance + shares;
@@ -286,7 +291,7 @@ contract Streamer {
         account.balances[token] = balance;
 
         // transfer token
-        ERC20(token).transferFrom(address(this), msg.sender, amount);
+        ERC20(token).transfer(msg.sender, amount);
         
         emit Withdraw(accountOwner, token, amount, balance, msg.sender);
 
