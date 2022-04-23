@@ -85,20 +85,4 @@ contract StreamerTest is DSTest {
         accountOwnerStrategyBalance = streamer.getYeildStrategyBalance(feiAddress, accountOwner);
         assertEq(accountOwnerStrategyBalance, 100);
     }
-
-    function testWithdrawFromYeildStrategy() public {
-        uint256 depositAmount = 100;
-        uint256 withdrawAmount = 50;
-        uint256 accountOwnerBalance;
-        uint256 accountOwnerStrategyBalance;
-
-        vm.startPrank(accountOwner);
-        fei.approve(address(streamer), depositAmount);
-        streamer.deposit(feiAddress, depositAmount);
-        streamer.withdraw(feiAddress, withdrawAmount);
-        vm.stopPrank();
-
-        accountOwnerStrategyBalance = streamer.getYeildStrategyBalance(feiAddress, accountOwner);
-        assertEq(accountOwnerStrategyBalance, 50);
-    }
 }

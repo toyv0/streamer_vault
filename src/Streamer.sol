@@ -221,13 +221,12 @@ contract Streamer {
     }
 
     function _withdrawFromStrategy(uint256 amount) internal returns (uint256) {
-        _validStrategyWithdrawal(amount, msg.sender);
         Account storage account = _accountOwners[msg.sender];
 
         uint256 newStrategyBalance;
 
-        uint256 shares = ERC4626(strategy).withdraw(amount, address(this), msg.sender); // who is owner? 
-        ERC20(underlyingStrategyToken).transfer(msg.sender, amount);    
+        uint256 shares = ERC4626(strategy).withdraw(amount, address(this), msg.sender);
+        ERC20(underlyingStrategyToken).transferFrom(address(this), msg.sender, amount);
 
         newStrategyBalance = account.strategyBalance - shares;
 
@@ -266,11 +265,12 @@ contract Streamer {
     }
 
     function withdraw(address token, uint256 amount) external returns (uint256) {
-        _validWithdrawal(amount, msg.sender, token);
-
         if (underlyingStrategyToken == token) {
+            _validStrategyWithdrawal(amount, msg.sender);
             _withdrawFromStrategy(amount);
         } else {
+            _validWithdrawal(amount, msg.sender, token);
+            
             Account storage account = _accountOwners[msg.sender];
 
             // update new balance 
@@ -291,14 +291,16 @@ contract Streamer {
 
     function withdrawFrom(address accountOwner, address token, uint256 amount) external returns (uint256) {
         _authorizedAccount(accountOwner);
-        _validWithdrawal(amount, accountOwner, token);
 
         // get or create account
         Account storage account = _accountOwners[accountOwner];
 
         if (underlyingStrategyToken == token) {
+            _validStrategyWithdrawal(amount, accountOwner);
             _withdrawFromStrategy(amount);
         } else {
+            _validWithdrawal(amount, accountOwner, token);
+
             // update new balance 
             uint256 balance = account.balances[token] - amount;
 
@@ -343,6 +345,15 @@ contract Streamer {
         }
     }
 
+    function _validStrategyWithdrawal(uint256 amount, address account) internal view {
+        Account storage _account = _accountOwners[account];
+
+        // check that the account has sufficient ERC20 balance 
+        if (amount > _account.strategyBalance) {
+            revert InsufficientBalance();
+        }
+    }
+
     function _validBaseWithdrawal(uint256 amount, address account) internal view {
         Account storage _account = _accountOwners[account];
 
@@ -351,13 +362,4 @@ contract Streamer {
             revert InsufficientBalance();
         }
     }
-
-    function _validStrategyWithdrawal(uint256 amount, address account) internal view {
-        Account storage _account = _accountOwners[account];
-
-        if (amount > _account.strategyBalance) {
-            revert InsufficientBalance();
-        }
-    }
-
 }
