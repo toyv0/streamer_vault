@@ -38,7 +38,7 @@ contract StreamerTest is DSTest {
 
         FuseERC4626 strategy = new FuseERC4626(fusePool18CToken, 'relayWalletStrategy', 'RWS');
 
-        streamer = new Streamer(fusePool18CToken, owner, feiAddress);
+        streamer = new Streamer(address(strategy), owner, feiAddress);
     }
 
     function testDepositERC20() public {
@@ -79,7 +79,6 @@ contract StreamerTest is DSTest {
 
         vm.startPrank(accountOwner);
         fei.approve(address(streamer), depositAmount);
-        console.log("here");
         streamer.deposit(feiAddress, 100);
         vm.stopPrank();
 
