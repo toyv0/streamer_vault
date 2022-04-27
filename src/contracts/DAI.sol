@@ -1,4 +1,4 @@
-import { ERC20 } from "@rari-capital/solmate/src/tokens/ERC20.sol";
+import { ERC20 } from "solmate/tokens/ERC20.sol";
 
 contract DAI is ERC20 {
     constructor() ERC20("DAI", "DAI", 18) {}
